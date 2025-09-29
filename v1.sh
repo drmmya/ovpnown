@@ -1,23 +1,45 @@
 #!/usr/bin/env bash
-# Ubuntu 22.04 OpenVPN Installer with auto-generated admin password
+# Ubuntu 22.04 Fresh OpenVPN Installer
 set -e
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run as root: sudo $0"; exit 1
 fi
 
-# Auto-generate admin username & password
+# ------------------------------
+# 1️⃣ Clean previous installation
+# ------------------------------
+echo "[+] Removing previous OpenVPN and admin panel (if any)..."
+systemctl stop openvpn@server || true
+systemctl stop openvpn@server-tcp443 || true
+systemctl stop openvpn-admin.service || true
+systemctl disable openvpn@server || true
+systemctl disable openvpn@server-tcp443 || true
+systemctl disable openvpn-admin.service || true
+rm -rf /etc/openvpn/easy-rsa /etc/openvpn/pki /etc/openvpn/*.conf /etc/openvpn/ta.key /etc/openvpn/creds.db
+rm -rf /opt/openvpn-admin
+rm -f /etc/systemd/system/openvpn-admin.service
+iptables -t nat -F
+netfilter-persistent save || true
+ufw --force reset
+
+# ------------------------------
+# 2️⃣ Admin username & password
+# ------------------------------
 ADMIN_USER="openvpn"
 ADMIN_PASS=$(tr -dc A-Z </dev/urandom | head -c2)$(shuf -i 100-999 -n1)
 echo "[+] Admin username: $ADMIN_USER"
 echo "[+] Admin password: $ADMIN_PASS"
 
-echo "[+] Updating OS..."
+# ------------------------------
+# 3️⃣ Update OS and install packages
+# ------------------------------
+echo "[+] Updating OS and installing packages..."
 apt update -y && apt upgrade -y
-
-echo "[+] Installing required packages..."
 apt install -y openvpn easy-rsa python3 python3-venv python3-pip iptables-persistent nginx ufw curl
 
-# Easy-RSA setup
+# ------------------------------
+# 4️⃣ Easy-RSA & Certificates
+# ------------------------------
 echo "[+] Setting up Easy-RSA..."
 make-cadir /etc/openvpn/easy-rsa
 chown -R root:root /etc/openvpn/easy-rsa
@@ -28,11 +50,13 @@ EASYRSA_BATCH=1 ./easyrsa gen-dh
 EASYRSA_BATCH=1 ./easyrsa build-server-full server nopass
 openvpn --genkey --secret /etc/openvpn/ta.key
 
-# copy artifacts
+# Copy artifacts
 cp pki/ca.crt pki/issued/server.crt pki/private/server.key pki/dh.pem /etc/openvpn/
-cp /etc/openvpn/ta.key /etc/openvpn/
 
-# Server config for UDP 1194
+# ------------------------------
+# 5️⃣ OpenVPN Server Config
+# ------------------------------
+# UDP 1194
 cat >/etc/openvpn/server.conf <<'EOF'
 port 1194
 proto udp
@@ -58,7 +82,7 @@ status /var/log/openvpn-status.log
 verb 3
 EOF
 
-# Server config for TCP 443
+# TCP 443
 cat >/etc/openvpn/server-tcp443.conf <<'EOF'
 port 443
 proto tcp
@@ -84,11 +108,15 @@ status /var/log/openvpn-status-tcp443.log
 verb 3
 EOF
 
-# Enable IP forwarding
+# ------------------------------
+# 6️⃣ Enable IP forwarding
+# ------------------------------
 sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/' /etc/sysctl.conf
 sysctl -p
 
-# Setup firewall
+# ------------------------------
+# 7️⃣ Firewall rules
+# ------------------------------
 IFACE=$(ip route get 8.8.8.8 | awk '{print $5}' | head -n1)
 iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o "$IFACE" -j MASQUERADE
 iptables -t nat -A POSTROUTING -s 10.8.1.0/24 -o "$IFACE" -j MASQUERADE
@@ -97,14 +125,15 @@ netfilter-persistent save
 ufw allow 1194/udp
 ufw allow 443/tcp
 ufw allow 943/tcp
-ufw reload
+ufw --force enable
 
-# Create credentials DB
+# ------------------------------
+# 8️⃣ Credentials DB & verify script
+# ------------------------------
 mkdir -p /etc/openvpn
 touch /etc/openvpn/creds.db
 chmod 600 /etc/openvpn/creds.db
 
-# Python verify script
 cat >/etc/openvpn/verify_creds.py <<'PY'
 #!/usr/bin/env python3
 import os, hashlib, binascii
@@ -132,14 +161,13 @@ def verify(username, password):
 if __name__=="__main__":
     username=os.environ.get('username') or ''
     password=os.environ.get('password') or ''
-    if verify(username,password):
-        exit(0)
-    else:
-        exit(1)
+    exit(0) if verify(username,password) else exit(1)
 PY
 chmod 700 /etc/openvpn/verify_creds.py
 
-# Flask admin panel
+# ------------------------------
+# 9️⃣ Flask Admin Panel
+# ------------------------------
 mkdir -p /opt/openvpn-admin
 python3 -m venv /opt/openvpn-admin/venv
 /opt/openvpn-admin/venv/bin/pip install --upgrade pip
@@ -233,7 +261,9 @@ if __name__=="__main__":
     APP.run(host='0.0.0.0', port=943)
 PYAPP
 
-# Env for admin credentials
+# ------------------------------
+# 10️⃣ Admin environment
+# ------------------------------
 cat >/opt/openvpn-admin/.env <<ENV
 OPENVPN_ADMIN_USER=${ADMIN_USER}
 OPENVPN_ADMIN_PASS=${ADMIN_PASS}
@@ -242,7 +272,9 @@ ENV
 chmod 700 /opt/openvpn-admin/.env
 chown -R root:root /opt/openvpn-admin
 
-# Systemd service for admin panel
+# ------------------------------
+# 11️⃣ Systemd service
+# ------------------------------
 cat >/etc/systemd/system/openvpn-admin.service <<'UNIT'
 [Unit]
 Description=OpenVPN Admin Flask App
@@ -259,15 +291,16 @@ Restart=on-failure
 WantedBy=multi-user.target
 UNIT
 
-# Enable services
+# ------------------------------
+# 12️⃣ Enable services
+# ------------------------------
 systemctl daemon-reload
 systemctl enable --now openvpn-admin.service
 systemctl enable --now openvpn@server
 systemctl enable --now openvpn@server-tcp443
 
-echo "✅ Installation complete!"
+echo "✅ Fresh installation complete!"
 echo "Admin panel: http://<server-ip>:943"
 echo "Admin username: $ADMIN_USER"
 echo "Admin password: $ADMIN_PASS"
 echo "OpenVPN server UDP 1194 & TCP 443 running"
-echo "Use admin panel to add/remove users and download .ovpn client configs"
