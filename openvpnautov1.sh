@@ -1,12 +1,10 @@
 #!/bin/bash
 
 ###############################################
-# FINAL FULLY FIXED OPENVPN INSTALLER
+# FINAL FULLY FIXED OPENVPN INSTALLER (V2)
 # - Auto remove old OpenVPN
-# - OpenVPN 2.6+ compatible
-# - Same CA / cert / key every VPS
-# - dh.pem generate
-# - NAT (eth0 + eth1)
+# - Works with openvpn 2.6+
+# - Works with openvpn-server@server OR openvpn@server
 # - Username: openvpn
 # - Password: Easin112233@
 # - Client:  http://SERVER_IP/ovpn/client.ovpn
@@ -22,6 +20,7 @@ fi
 
 echo "=== Removing old OpenVPN installation (if any) ==="
 systemctl stop openvpn-server@server.service 2>/dev/null || true
+systemctl stop openvpn@server.service 2>/dev/null || true
 apt-get purge -y openvpn 2>/dev/null || true
 rm -rf /etc/openvpn 2>/dev/null || true
 
@@ -173,7 +172,7 @@ echo "=== Generating dh.pem (2048-bit) ==="
 openssl dhparam -out dh.pem 2048
 
 ###############################################
-# OpenVPN 2.6 compatible server.conf
+# OpenVPN server.conf (no user/group)
 ###############################################
 echo "=== Writing server.conf ==="
 cat > /etc/openvpn/server/server.conf <<'EOF'
@@ -199,24 +198,23 @@ keepalive 10 120
 persist-key
 persist-tun
 
-# Drop privileges
-user nobody
-group nogroup
-
 script-security 3
-# NO client certificate, only username/password
 verify-client-cert none
 auth-user-pass-verify /etc/openvpn/server/auth/checkpsw.sh via-file
 username-as-common-name
 duplicate-cn
 
-# Allow clients to use server as default gateway + DNS
 push "redirect-gateway def1 bypass-dhcp"
 push "dhcp-option DNS 1.1.1.1"
 push "dhcp-option DNS 8.8.8.8"
 
+log /var/log/openvpn.log
+status /var/log/openvpn-status.log
 verb 3
 EOF
+
+# For old-style service openvpn@server.conf
+cp /etc/openvpn/server/server.conf /etc/openvpn/server.conf
 
 echo "=== Enabling IP forwarding ==="
 echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-openvpn-forward.conf
@@ -231,7 +229,6 @@ iptables -t nat -F
 iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE 2>/dev/null || true
 iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth1 -j MASQUERADE 2>/dev/null || true
 
-# Allow VPN traffic and forwarding
 iptables -A INPUT -p udp --dport 1194 -j ACCEPT
 iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
 iptables -A FORWARD -s 10.8.0.0/24 -j ACCEPT
@@ -252,7 +249,7 @@ cat > /etc/openvpn/server/auth/checkpsw.sh <<'EOF'
 #!/bin/bash
 
 PASSFILE="/etc/openvpn/server/auth/psw-file"
-LOG="/tmp/openvpn-password.log"
+LOG="/var/log/openvpn-password.log"
 
 CRED_FILE="$1"
 
@@ -270,17 +267,18 @@ else
 fi
 EOF
 
-# Make sure openvpn (running as nobody) can read/execute
-chown -R nobody:nogroup /etc/openvpn/server/auth
 chmod 700 /etc/openvpn/server/auth/checkpsw.sh
 chmod 600 /etc/openvpn/server/auth/psw-file
 
 ###############################################
-# Start OpenVPN service
+# Start OpenVPN service (new + old style)
 ###############################################
 echo "=== Starting OpenVPN service ==="
-systemctl enable openvpn-server@server.service
-systemctl restart openvpn-server@server.service
+systemctl enable openvpn-server@server.service 2>/dev/null || true
+systemctl restart openvpn-server@server.service 2>/dev/null || true
+
+systemctl enable openvpn@server.service 2>/dev/null || true
+systemctl restart openvpn@server.service 2>/dev/null || true
 
 ###############################################
 # Generate client.ovpn and serve via nginx
@@ -322,4 +320,5 @@ echo ""
 echo " Download client config:"
 echo "   http://${SERVER_IP}/ovpn/client.ovpn"
 echo ""
+echo " Logs: /var/log/openvpn.log"
 echo "=============================================="
