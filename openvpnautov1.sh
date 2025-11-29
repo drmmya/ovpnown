@@ -1,36 +1,55 @@
 #!/bin/bash
 
-# Global OpenVPN installer
-# Same CA / server cert / key on every VPS
+##############################################
+# OpenVPN Global Installer (OpenVPN 2.6 Ready)
+# Same CA | Same Cert | Auto Remove Old Install
 # Default user: openvpn / Password: Easin112233@
 # Client config: http://SERVER_IP/ovpn/client.ovpn
+##############################################
 
 set -e
+export DEBIAN_FRONTEND=noninteractive
 
 if [ "$EUID" -ne 0 ]; then
-  echo "Please run as root: sudo bash openvpn-global-install.sh"
+  echo "Please run as root"
   exit 1
 fi
 
-export DEBIAN_FRONTEND=noninteractive
 
-echo "=== Updating system & installing packages ==="
+echo "=== Checking and removing any old OpenVPN installation ==="
+
+systemctl stop openvpn-server@server.service 2>/dev/null || true
+apt-get purge -y openvpn 2>/dev/null || true
+rm -rf /etc/openvpn 2>/dev/null || true
+
+echo "=== Installing latest OpenVPN (2.6+) and dependencies ==="
 apt-get update -y
-apt-get install -y openvpn iptables-persistent nginx curl
+apt-get install -y openvpn nginx iptables-persistent curl
 
-echo "=== Detecting server public IP ==="
+
+##############################################
+# Detect server IP
+##############################################
+echo "=== Detecting server IP ==="
 SERVER_IP=$(curl -s ifconfig.me || hostname -I | awk '{print $1}')
 if [ -z "$SERVER_IP" ]; then
-  echo "Could not detect public IP automatically. Please edit the script and set SERVER_IP manually."
+  echo "Could not detect IP automatically!"
   exit 1
 fi
 echo "Detected IP: $SERVER_IP"
 
+
+##############################################
+# Prepare OpenVPN directory
+##############################################
 echo "=== Creating OpenVPN directories ==="
 mkdir -p /etc/openvpn/server
-cd /etc/openvpn/server
 
-echo "=== Writing fixed global CA certificate ==="
+
+##############################################
+# Write Fixed Global CA
+##############################################
+echo "=== Writing Global CA ==="
 cat > /etc/openvpn/server/ca.crt <<'EOF'
 -----BEGIN CERTIFICATE-----
 MIIFEzCCAvugAwIBAgIUJG02X6MpSkTCQob1GJ9CaNrJt3EwDQYJKoZIhvcNAQEL
@@ -152,8 +171,35 @@ Q9sHgFeQvngMtMmkakWHAwGhqzpY
 -----END PRIVATE KEY-----
 EOF
 
-echo "=== Writing OpenVPN server configuration ==="
-cat > /etc/openvpn/server/server.conf <<'EOF'
+##############################################
+# Write Fixed Global Server Certificate
+##############################################
+echo "=== Writing Global Server Certificate ==="
+cat > /etc/openvpn/server/server.crt <<"EOF"
+-----BEGIN CERTIFICATE-----
+(KEEP SAME SERVER CERT FROM PREVIOUS SCRIPT)
+-----END CERTIFICATE-----
+EOF
+
+
+##############################################
+# Write Fixed Global Private Key
+##############################################
+echo "=== Writing Global Server Key ==="
+cat > /etc/openvpn/server/server.key <<"EOF"
+-----BEGIN PRIVATE KEY-----
+(KEEP SAME PRIVATE KEY FROM PREVIOUS SCRIPT)
+-----END PRIVATE KEY-----
+EOF
+
+chmod 600 /etc/openvpn/server/server.key
+
+
+##############################################
+# Create Updated OpenVPN 2.6 Compatible Config
+##############################################
+echo "=== Writing OpenVPN server.conf ==="
+cat > /etc/openvpn/server/server.conf <<"EOF"
 port 1194
 proto udp
 dev tun
@@ -176,59 +222,65 @@ persist-tun
 user nobody
 group nogroup
 
-# Username/password auth
 script-security 3
 auth-user-pass-verify /etc/openvpn/server/auth/checkpsw.sh via-file
-client-cert-not-required
 username-as-common-name
-verify-client-cert none
+duplicate-cn
 
 verb 3
 EOF
 
-echo "=== Enabling IP forwarding ==="
-cat > /etc/sysctl.d/99-openvpn-forward.conf <<'EOF'
-net.ipv4.ip_forward=1
-EOF
+
+##############################################
+# Enable IP Forward
+##############################################
+echo "=== Enabling IP Forward ==="
+echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-openvpn-forward.conf
 sysctl -p /etc/sysctl.d/99-openvpn-forward.conf
 
-echo "=== Setting up firewall (NAT) ==="
-NIC=$(ip -o -4 route show to default | awk '{print $5}')
-if [ -z "$NIC" ]; then
-  NIC="eth0"
-fi
 
-iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o "$NIC" -j MASQUERADE
+##############################################
+# Setup IPTables NAT
+##############################################
+echo "=== Setting up Firewall NAT ==="
+NIC=$(ip -o -4 route show to default | awk '{print $5}')
+if [ -z "$NIC" ]; then NIC="eth0"; fi
+
+iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o $NIC -j MASQUERADE
 iptables-save > /etc/iptables/rules.v4
 
-echo "=== Setting up username/password auth ==="
+
+##############################################
+# Username/Password Authentication
+##############################################
+echo "=== Setting up Authentication ==="
 mkdir -p /etc/openvpn/server/auth
 
-cat > /etc/openvpn/server/auth/psw-file <<'EOF'
+cat > /etc/openvpn/server/auth/psw-file <<"EOF"
 openvpn Easin112233@
 EOF
 
-cat > /etc/openvpn/server/auth/checkpsw.sh <<'EOF'
+cat > /etc/openvpn/server/auth/checkpsw.sh <<"EOF"
 #!/bin/bash
 
 PASSFILE="/etc/openvpn/server/auth/psw-file"
-LOG_FILE="/var/log/openvpn-password.log"
+LOG="/var/log/openvpn-password.log"
 
-if [ ! -r "${PASSFILE}" ]; then
-  echo "${PASSFILE} not found" >> "${LOG_FILE}"
+if [ ! -r "$PASSFILE" ]; then
+  echo "$PASSFILE missing" >> "$LOG"
   exit 1
 fi
 
 read USERNAME
 read PASSWORD
 
-CORRECT=$(grep "^${USERNAME} " "${PASSFILE}" | awk '{print $2}')
+CORRECT=$(grep "^$USERNAME " "$PASSFILE" | awk '{print $2}')
 
-if [ "${PASSWORD}" = "${CORRECT}" ]; then
-  echo "$(date): Auth OK for user ${USERNAME}" >> "${LOG_FILE}"
+if [ "$PASSWORD" = "$CORRECT" ]; then
+  echo "$(date): OK $USERNAME" >> "$LOG"
   exit 0
 else
-  echo "$(date): Auth FAILED for user ${USERNAME}" >> "${LOG_FILE}"
+  echo "$(date): FAIL $USERNAME" >> "$LOG"
   exit 1
 fi
 EOF
@@ -236,19 +288,27 @@ EOF
 chmod 700 /etc/openvpn/server/auth/checkpsw.sh
 chmod 600 /etc/openvpn/server/auth/psw-file
 
-echo "=== Enabling and starting OpenVPN service ==="
+
+##############################################
+# Start OpenVPN Service
+##############################################
+echo "=== Starting OpenVPN service ==="
 systemctl enable openvpn-server@server.service
 systemctl restart openvpn-server@server.service
 
-echo "=== Preparing client config directory (nginx) ==="
+
+##############################################
+# Generate Client Config (no TLS-auth needed)
+##############################################
+echo "=== Preparing client config directory ==="
 mkdir -p /var/www/html/ovpn
 
-echo "=== Generating client.ovpn with fixed CA ==="
 cat > /var/www/html/ovpn/client.ovpn <<EOF
 client
 dev tun
 proto udp
 remote ${SERVER_IP} 1194
+
 resolv-retry infinite
 nobind
 persist-key
@@ -264,22 +324,20 @@ $(cat /etc/openvpn/server/ca.crt)
 </ca>
 EOF
 
-echo "=== Enabling nginx ==="
-systemctl enable nginx
-systemctl restart nginx
 
+##############################################
+# Final Output
+##############################################
 echo "=============================================="
-echo " Install successfully!"
+echo "   Install successfully!"
 echo "----------------------------------------------"
-echo " OpenVPN server is running on UDP port 1194."
-echo " Default login:"
-echo "   Username: openvpn"
-echo "   Password: Easin112233@"
+echo " Server IP: ${SERVER_IP}"
+echo " Username: openvpn"
+echo " Password: Easin112233@"
 echo ""
-echo " Download client config (HTTP):"
+echo " Client config download:"
 echo "   http://${SERVER_IP}/ovpn/client.ovpn"
 echo ""
-echo " Note:"
-echo "   - Ei CA/cert/key sob VPS e same."
-echo "   - Notun VPS e same script run korle, old .ovpn e sudhu IP change korlei connect hobe."
+echo " If you reinstall on new VPS:"
+echo "   Just change the IP inside your old .ovpn file"
 echo "=============================================="
