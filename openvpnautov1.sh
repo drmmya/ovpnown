@@ -1,10 +1,10 @@
 #!/bin/bash
 
 ###############################################
-# FINAL FULLY FIXED OPENVPN INSTALLER (V2)
+# FINAL FULLY FIXED OPENVPN INSTALLER (V3)
 # - Auto remove old OpenVPN
-# - Works with openvpn 2.6+
-# - Works with openvpn-server@server OR openvpn@server
+# - OpenVPN 2.6+ compatible
+# - CA/cert/key fixed paths
 # - Username: openvpn
 # - Password: Easin112233@
 # - Client:  http://SERVER_IP/ovpn/client.ovpn
@@ -169,71 +169,7 @@ EOF
 chmod 600 /etc/openvpn/server/server.key
 
 echo "=== Generating dh.pem (2048-bit) ==="
-openssl dhparam -out dh.pem 2048
-
-###############################################
-# OpenVPN server.conf (no user/group)
-###############################################
-echo "=== Writing server.conf ==="
-cat > /etc/openvpn/server/server.conf <<'EOF'
-port 1194
-proto udp
-dev tun
-
-ca ca.crt
-cert server.crt
-key server.key
-dh dh.pem
-
-cipher AES-256-CBC
-auth SHA256
-data-ciphers AES-256-GCM:AES-128-GCM:AES-256-CBC
-data-ciphers-fallback AES-256-CBC
-
-topology subnet
-server 10.8.0.0 255.255.255.0
-ifconfig-pool-persist ipp.txt
-
-keepalive 10 120
-persist-key
-persist-tun
-
-script-security 3
-verify-client-cert none
-auth-user-pass-verify /etc/openvpn/server/auth/checkpsw.sh via-file
-username-as-common-name
-duplicate-cn
-
-push "redirect-gateway def1 bypass-dhcp"
-push "dhcp-option DNS 1.1.1.1"
-push "dhcp-option DNS 8.8.8.8"
-
-log /var/log/openvpn.log
-status /var/log/openvpn-status.log
-verb 3
-EOF
-
-# For old-style service openvpn@server.conf
-cp /etc/openvpn/server/server.conf /etc/openvpn/server.conf
-
-echo "=== Enabling IP forwarding ==="
-echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-openvpn-forward.conf
-sysctl -p /etc/sysctl.d/99-openvpn-forward.conf
-
-###############################################
-# NAT rules: eth0 + eth1
-###############################################
-echo "=== Configuring NAT (eth0 + eth1) ==="
-iptables -t nat -F
-
-iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE 2>/dev/null || true
-iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth1 -j MASQUERADE 2>/dev/null || true
-
-iptables -A INPUT -p udp --dport 1194 -j ACCEPT
-iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
-iptables -A FORWARD -s 10.8.0.0/24 -j ACCEPT
-
-iptables-save > /etc/iptables/rules.v4
+openssl dhparam -out /etc/openvpn/server/dh.pem 2048
 
 ###############################################
 # Username/password auth
@@ -269,6 +205,70 @@ EOF
 
 chmod 700 /etc/openvpn/server/auth/checkpsw.sh
 chmod 600 /etc/openvpn/server/auth/psw-file
+
+###############################################
+# OpenVPN server.conf (absolute paths)
+###############################################
+echo "=== Writing server.conf ==="
+cat > /etc/openvpn/server/server.conf <<'EOF'
+port 1194
+proto udp
+dev tun
+
+ca /etc/openvpn/server/ca.crt
+cert /etc/openvpn/server/server.crt
+key /etc/openvpn/server/server.key
+dh /etc/openvpn/server/dh.pem
+
+cipher AES-256-CBC
+auth SHA256
+data-ciphers AES-256-GCM:AES-128-GCM:AES-256-CBC
+data-ciphers-fallback AES-256-CBC
+
+topology subnet
+server 10.8.0.0 255.255.255.0
+ifconfig-pool-persist /etc/openvpn/server/ipp.txt
+
+keepalive 10 120
+persist-key
+persist-tun
+
+script-security 3
+verify-client-cert none
+auth-user-pass-verify /etc/openvpn/server/auth/checkpsw.sh via-file
+username-as-common-name
+duplicate-cn
+
+push "redirect-gateway def1 bypass-dhcp"
+push "dhcp-option DNS 1.1.1.1"
+push "dhcp-option DNS 8.8.8.8"
+
+log /var/log/openvpn.log
+status /var/log/openvpn-status.log
+verb 3
+EOF
+
+# Old-style service uses /etc/openvpn/server.conf
+cp /etc/openvpn/server/server.conf /etc/openvpn/server.conf
+
+echo "=== Enabling IP forwarding ==="
+echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-openvpn-forward.conf
+sysctl -p /etc/sysctl.d/99-openvpn-forward.conf
+
+###############################################
+# NAT rules: eth0 + eth1
+###############################################
+echo "=== Configuring NAT (eth0 + eth1) ==="
+iptables -t nat -F
+
+iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE 2>/dev/null || true
+iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth1 -j MASQUERADE 2>/dev/null || true
+
+iptables -A INPUT -p udp --dport 1194 -j ACCEPT
+iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -A FORWARD -s 10.8.0.0/24 -j ACCEPT
+
+iptables-save > /etc/iptables/rules.v4
 
 ###############################################
 # Start OpenVPN service (new + old style)
