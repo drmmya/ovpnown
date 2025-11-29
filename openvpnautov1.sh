@@ -1,13 +1,12 @@
 #!/bin/bash
 
 ###############################################
-# FINAL FULLY FIXED OPENVPN INSTALLER (V3)
-# - Auto remove old OpenVPN
-# - OpenVPN 2.6+ compatible
-# - CA/cert/key fixed paths
+# CLEAN & SIMPLE OPENVPN INSTALLER (FINAL)
+# - Everything under /etc/openvpn
+# - Service: openvpn@server.service
 # - Username: openvpn
 # - Password: Easin112233@
-# - Client:  http://SERVER_IP/ovpn/client.ovpn
+# - Client download: http://SERVER_IP/ovpn/client.ovpn
 ###############################################
 
 set -e
@@ -18,13 +17,14 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-echo "=== Removing old OpenVPN installation (if any) ==="
-systemctl stop openvpn-server@server.service 2>/dev/null || true
+echo "=== Stopping & removing old OpenVPN ==="
 systemctl stop openvpn@server.service 2>/dev/null || true
-apt-get purge -y openvpn 2>/dev/null || true
-rm -rf /etc/openvpn 2>/dev/null || true
+systemctl stop openvpn-server@server.service 2>/dev/null || true
 
-echo "=== Installing OpenVPN + dependencies ==="
+apt-get purge -y openvpn 2>/dev/null || true
+rm -rf /etc/openvpn
+
+echo "=== Installing OpenVPN + deps ==="
 apt-get update -y
 apt-get install -y openvpn nginx iptables-persistent curl openssl
 
@@ -32,15 +32,14 @@ echo "=== Detecting public IP ==="
 SERVER_IP=$(curl -s ifconfig.me || hostname -I | awk '{print $1}')
 echo "Using IP: $SERVER_IP"
 
-echo "=== Creating OpenVPN directory ==="
-mkdir -p /etc/openvpn/server
-cd /etc/openvpn/server
+echo "=== Preparing /etc/openvpn ==="
+mkdir -p /etc/openvpn
+cd /etc/openvpn
 
 ###############################################
-# Global CA certificate
+# CA CERT
 ###############################################
-echo "=== Writing CA certificate ==="
-cat > /etc/openvpn/server/ca.crt <<'EOF'
+cat > /etc/openvpn/ca.crt <<'EOF'
 -----BEGIN CERTIFICATE-----
 MIIFEzCCAvugAwIBAgIUJG02X6MpSkTCQob1GJ9CaNrJt3EwDQYJKoZIhvcNAQEL
 BQAwGTEXMBUGA1UEAwwOT1ZQTi1HbG9iYWwtQ0EwHhcNMjUxMTI5MDUxMDU0WhcN
@@ -74,10 +73,9 @@ uImhp2w3xA==
 EOF
 
 ###############################################
-# Global Server certificate
+# SERVER CERT
 ###############################################
-echo "=== Writing server certificate ==="
-cat > /etc/openvpn/server/server.crt <<'EOF'
+cat > /etc/openvpn/server.crt <<'EOF'
 -----BEGIN CERTIFICATE-----
 MIIEtjCCAp4CFAbfmyx9LE7QtoVckDo9KALEQX9jMA0GCSqGSIb3DQEBCwUAMBkx
 FzAVBgNVBAMMDk9WUE4tR2xvYmFsLUNBMB4XDTI1MTEyOTA5NTExNVoXDTM1MTEy
@@ -109,10 +107,9 @@ yF3d7djUWxEOfA==
 EOF
 
 ###############################################
-# Global Server private key
+# SERVER KEY
 ###############################################
-echo "=== Writing server private key ==="
-cat > /etc/openvpn/server/server.key <<'EOF'
+cat > /etc/openvpn/server.key <<'EOF'
 -----BEGIN PRIVATE KEY-----
 MIIJQQIBADANBgkqhkiG9w0BAQEFAASCCSswggknAgEAAoICAQCzrZeolH+aA2yX
 QJ12FE9r9qqWh0Q61c027iXpHjVHexCbmG1/unjJTkk4G+02JAWUVOVnIzX20RTO
@@ -146,7 +143,7 @@ El5XRNOkV0efqYE+sGvsfpuyN5Va//+I6VY/xNmiulbOA3heeVGsvk/qWqyvcBMR
 /s6UfaM8ZI9bzB5nJWznPba9h2HWEDuJYs5gbpEcwSXlAEsholjBngl7WgcT4Vj+
 GQVGpP3WAZw3MVpA6XmmJO/f52+GOjdSff7GPdUFwMoDDVZGoBj3VUAvY8v01LLg
 RyX5d+64/hdA7+iJAQSidONp0HPmjGz0gdG1z0aOyfPPsAs89adimn5IQkUwii1t
-OTRBKfThLu/M8b5bGaZyzYnSMHtyMxTIiVvIKl1JanqZKZ/67/PPdGsRVGNG8QDs
+OTRBKfThLu/M8b5bGaZyzYnSMHtyMxTIiVvIKl1JanqKZ/67/PPdGsRVGNG8QDs
 t4fNhCDV4ajFAoIBAHzS7ZZW4hfeWQHUTTkLPynOJ6TX3QTPikudqyoSameOqz+4
 Q3tBV7cF0hiCbi2LPthOgayqP/ztHjrFHoY4HUOhOA4v/k9w7qbM6J6PTDbgiz16
 tuqgK1RJ3G1/pL+k6+e3NXojoVJ6IqUn83+NDbq1TjcGyr/DW+iwzOqy12oEsz3S
@@ -166,27 +163,25 @@ QQbfffINWmW0Qto6XtIWDv76jhBAH54DhS7TD1sDkF+R86N/VZzvafFd8W2L41vq
 Q9sHgFeQvngMtMmkakWHAwGhqzpY
 -----END PRIVATE KEY-----
 EOF
-chmod 600 /etc/openvpn/server/server.key
+chmod 600 /etc/openvpn/server.key
 
-echo "=== Generating dh.pem (2048-bit) ==="
-openssl dhparam -out /etc/openvpn/server/dh.pem 2048
+echo "=== Generating dh.pem ==="
+openssl dhparam -out /etc/openvpn/dh.pem 2048
 
 ###############################################
-# Username/password auth
+# AUTH FILES
 ###############################################
-echo "=== Setting up authentication ==="
-mkdir -p /etc/openvpn/server/auth
+mkdir -p /etc/openvpn/auth
 
-cat > /etc/openvpn/server/auth/psw-file <<'EOF'
+cat > /etc/openvpn/auth/psw-file <<'EOF'
 openvpn Easin112233@
 EOF
 
-cat > /etc/openvpn/server/auth/checkpsw.sh <<'EOF'
+cat > /etc/openvpn/auth/checkpsw.sh <<'EOF'
 #!/bin/bash
 
-PASSFILE="/etc/openvpn/server/auth/psw-file"
+PASSFILE="/etc/openvpn/auth/psw-file"
 LOG="/var/log/openvpn-password.log"
-
 CRED_FILE="$1"
 
 USERNAME=$(head -n1 "$CRED_FILE")
@@ -203,22 +198,21 @@ else
 fi
 EOF
 
-chmod 700 /etc/openvpn/server/auth/checkpsw.sh
-chmod 600 /etc/openvpn/server/auth/psw-file
+chmod 700 /etc/openvpn/auth/checkpsw.sh
+chmod 600 /etc/openvpn/auth/psw-file
 
 ###############################################
-# OpenVPN server.conf (absolute paths)
+# SERVER CONFIG  (ONLY /etc/openvpn/server.conf)
 ###############################################
-echo "=== Writing server.conf ==="
-cat > /etc/openvpn/server/server.conf <<'EOF'
+cat > /etc/openvpn/server.conf <<'EOF'
 port 1194
 proto udp
 dev tun
 
-ca /etc/openvpn/server/ca.crt
-cert /etc/openvpn/server/server.crt
-key /etc/openvpn/server/server.key
-dh /etc/openvpn/server/dh.pem
+ca ca.crt
+cert server.crt
+key server.key
+dh dh.pem
 
 cipher AES-256-CBC
 auth SHA256
@@ -227,7 +221,7 @@ data-ciphers-fallback AES-256-CBC
 
 topology subnet
 server 10.8.0.0 255.255.255.0
-ifconfig-pool-persist /etc/openvpn/server/ipp.txt
+ifconfig-pool-persist ipp.txt
 
 keepalive 10 120
 persist-key
@@ -235,7 +229,7 @@ persist-tun
 
 script-security 3
 verify-client-cert none
-auth-user-pass-verify /etc/openvpn/server/auth/checkpsw.sh via-file
+auth-user-pass-verify /etc/openvpn/auth/checkpsw.sh via-file
 username-as-common-name
 duplicate-cn
 
@@ -248,42 +242,32 @@ status /var/log/openvpn-status.log
 verb 3
 EOF
 
-# Old-style service uses /etc/openvpn/server.conf
-cp /etc/openvpn/server/server.conf /etc/openvpn/server.conf
-
-echo "=== Enabling IP forwarding ==="
+###############################################
+# IP FORWARD + NAT
+###############################################
 echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-openvpn-forward.conf
 sysctl -p /etc/sysctl.d/99-openvpn-forward.conf
 
-###############################################
-# NAT rules: eth0 + eth1
-###############################################
-echo "=== Configuring NAT (eth0 + eth1) ==="
 iptables -t nat -F
-
-iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE 2>/dev/null || true
-iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth1 -j MASQUERADE 2>/dev/null || true
-
 iptables -A INPUT -p udp --dport 1194 -j ACCEPT
 iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
 iptables -A FORWARD -s 10.8.0.0/24 -j ACCEPT
-
+iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE 2>/dev/null || true
+iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth1 -j MASQUERADE 2>/dev/null || true
 iptables-save > /etc/iptables/rules.v4
 
 ###############################################
-# Start OpenVPN service (new + old style)
+# START SERVICE (ONLY openvpn@server)
 ###############################################
-echo "=== Starting OpenVPN service ==="
-systemctl enable openvpn-server@server.service 2>/dev/null || true
-systemctl restart openvpn-server@server.service 2>/dev/null || true
+systemctl disable openvpn-server@server.service 2>/dev/null || true
+systemctl stop openvpn-server@server.service 2>/dev/null || true
 
-systemctl enable openvpn@server.service 2>/dev/null || true
-systemctl restart openvpn@server.service 2>/dev/null || true
+systemctl enable openvpn@server.service
+systemctl restart openvpn@server.service
 
 ###############################################
-# Generate client.ovpn and serve via nginx
+# CLIENT .OVPN VIA NGINX
 ###############################################
-echo "=== Creating client.ovpn ==="
 mkdir -p /var/www/html/ovpn
 
 cat > /var/www/html/ovpn/client.ovpn <<EOF
@@ -306,7 +290,7 @@ auth SHA256
 verb 3
 
 <ca>
-$(cat /etc/openvpn/server/ca.crt)
+$(cat /etc/openvpn/ca.crt)
 </ca>
 EOF
 
@@ -320,5 +304,6 @@ echo ""
 echo " Download client config:"
 echo "   http://${SERVER_IP}/ovpn/client.ovpn"
 echo ""
-echo " Logs: /var/log/openvpn.log"
+echo " Log file:"
+echo "   /var/log/openvpn.log"
 echo "=============================================="
