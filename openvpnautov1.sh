@@ -6,10 +6,10 @@
 # - OpenVPN 2.6+ compatible
 # - Same CA / cert / key every VPS
 # - dh.pem generate
-# - NAT for eth0 + eth1
+# - NAT (eth0 + eth1)
 # - Username: openvpn
 # - Password: Easin112233@
-# - Client: http://SERVER_IP/ovpn/client.ovpn
+# - Client:  http://SERVER_IP/ovpn/client.ovpn
 ###############################################
 
 set -e
@@ -38,7 +38,7 @@ mkdir -p /etc/openvpn/server
 cd /etc/openvpn/server
 
 ###############################################
-# Global CA certificate (same for all VPS)
+# Global CA certificate
 ###############################################
 echo "=== Writing CA certificate ==="
 cat > /etc/openvpn/server/ca.crt <<'EOF'
@@ -75,7 +75,7 @@ uImhp2w3xA==
 EOF
 
 ###############################################
-# Global Server certificate (same for all VPS)
+# Global Server certificate
 ###############################################
 echo "=== Writing server certificate ==="
 cat > /etc/openvpn/server/server.crt <<'EOF'
@@ -110,7 +110,7 @@ yF3d7djUWxEOfA==
 EOF
 
 ###############################################
-# Global Server private key (same for all VPS)
+# Global Server private key
 ###############################################
 echo "=== Writing server private key ==="
 cat > /etc/openvpn/server/server.key <<'EOF'
@@ -199,13 +199,21 @@ keepalive 10 120
 persist-key
 persist-tun
 
+# Drop privileges
 user nobody
 group nogroup
 
 script-security 3
+# NO client certificate, only username/password
+verify-client-cert none
 auth-user-pass-verify /etc/openvpn/server/auth/checkpsw.sh via-file
 username-as-common-name
 duplicate-cn
+
+# Allow clients to use server as default gateway + DNS
+push "redirect-gateway def1 bypass-dhcp"
+push "dhcp-option DNS 1.1.1.1"
+push "dhcp-option DNS 8.8.8.8"
 
 verb 3
 EOF
@@ -215,13 +223,18 @@ echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-openvpn-forward.conf
 sysctl -p /etc/sysctl.d/99-openvpn-forward.conf
 
 ###############################################
-# NAT rules: eth0 + eth1 (multi-interface VPS)
+# NAT rules: eth0 + eth1
 ###############################################
 echo "=== Configuring NAT (eth0 + eth1) ==="
 iptables -t nat -F
 
 iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE 2>/dev/null || true
 iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth1 -j MASQUERADE 2>/dev/null || true
+
+# Allow VPN traffic and forwarding
+iptables -A INPUT -p udp --dport 1194 -j ACCEPT
+iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -A FORWARD -s 10.8.0.0/24 -j ACCEPT
 
 iptables-save > /etc/iptables/rules.v4
 
@@ -239,10 +252,12 @@ cat > /etc/openvpn/server/auth/checkpsw.sh <<'EOF'
 #!/bin/bash
 
 PASSFILE="/etc/openvpn/server/auth/psw-file"
-LOG="/var/log/openvpn-password.log"
+LOG="/tmp/openvpn-password.log"
 
-read USERNAME
-read PASSWORD
+CRED_FILE="$1"
+
+USERNAME=$(head -n1 "$CRED_FILE")
+PASSWORD=$(tail -n1 "$CRED_FILE")
 
 CORRECT=$(grep "^$USERNAME " "$PASSFILE" | awk '{print $2}')
 
@@ -255,6 +270,8 @@ else
 fi
 EOF
 
+# Make sure openvpn (running as nobody) can read/execute
+chown -R nobody:nogroup /etc/openvpn/server/auth
 chmod 700 /etc/openvpn/server/auth/checkpsw.sh
 chmod 600 /etc/openvpn/server/auth/psw-file
 
@@ -305,7 +322,4 @@ echo ""
 echo " Download client config:"
 echo "   http://${SERVER_IP}/ovpn/client.ovpn"
 echo ""
-echo " Note:"
-echo "   - Same CA/cert/key every VPS."
-echo "   - New VPS e same script run kore, old .ovpn e sudhu IP change korleo cholbe."
 echo "=============================================="
