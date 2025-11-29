@@ -43,28 +43,6 @@ cd /etc/openvpn/server
 # CA INSERT HERE
 ###############################################################
 echo "=== Writing Global CA ==="
-cat > /etc/openvpn/server/ca.crt <<"EOF"
------BEGIN CERTIFICATE-----
-[PASTE YOUR CA HERE EXACTLY]
------END CERTIFICATE-----
-EOF
-
-
-###############################################################
-# SERVER CERT INSERT HERE
-###############################################################
-echo "=== Writing Server Certificate ==="
-cat > /etc/openvpn/server/server.crt <<"EOF"
------BEGIN CERTIFICATE-----
-[PASTE YOUR SERVER.CRT HERE EXACTLY]
------END CERTIFICATE-----
-EOF
-
-
-###############################################################
-# SERVER KEY INSERT HERE
-###############################################################
-echo "=== Writing Global CA ==="
 cat > /etc/openvpn/server/ca.crt <<'EOF'
 -----BEGIN CERTIFICATE-----
 MIIFEzCCAvugAwIBAgIUJG02X6MpSkTCQob1GJ9CaNrJt3EwDQYJKoZIhvcNAQEL
@@ -98,6 +76,11 @@ uImhp2w3xA==
 -----END CERTIFICATE-----
 EOF
 
+
+
+###############################################################
+# SERVER CERT INSERT HERE
+###############################################################
 echo "=== Writing fixed global server certificate ==="
 cat > /etc/openvpn/server/server.crt <<'EOF'
 -----BEGIN CERTIFICATE-----
@@ -129,6 +112,12 @@ ZEiRnbOYOsdZxx5pz2hF0FEaGIs31woYb9VIOZlL37ag2ZBi4vlqhgY73WMusg4l
 yF3d7djUWxEOfA==
 -----END CERTIFICATE-----
 EOF
+
+
+
+###############################################################
+# SERVER KEY INSERT HERE
+###############################################################
 
 echo "=== Writing fixed global server private key ==="
 cat > /etc/openvpn/server/server.key <<'EOF'
