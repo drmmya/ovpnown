@@ -1,48 +1,46 @@
 #!/bin/bash
 
 ###############################################
-# FINAL OpenVPN 2.6+ Installer
-# 100% Compatible – Auto Clean Old Install
-# Same CA / Same Cert / Same Key Every VPS
-# dh.pem auto generate
-# Username: openvpn / Password: Easin112233@
-# Client download: http://SERVER_IP/ovpn/client.ovpn
+# FINAL FULLY FIXED OPENVPN INSTALLER
+# - Auto remove old OpenVPN
+# - OpenVPN 2.6+ compatible
+# - Same CA / cert / key every VPS
+# - dh.pem generate
+# - NAT for eth0 + eth1
+# - Username: openvpn
+# - Password: Easin112233@
+# - Client: http://SERVER_IP/ovpn/client.ovpn
 ###############################################
 
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
 if [ "$EUID" -ne 0 ]; then
-  echo "Run as root"
+  echo "Please run as root"
   exit 1
 fi
 
-
-echo "=== Removing old OpenVPN installations ==="
+echo "=== Removing old OpenVPN installation (if any) ==="
 systemctl stop openvpn-server@server.service 2>/dev/null || true
 apt-get purge -y openvpn 2>/dev/null || true
 rm -rf /etc/openvpn 2>/dev/null || true
 
-
-echo "=== Installing dependencies ==="
+echo "=== Installing OpenVPN + dependencies ==="
 apt-get update -y
 apt-get install -y openvpn nginx iptables-persistent curl openssl
 
-
-echo "=== Detecting server public IP ==="
+echo "=== Detecting public IP ==="
 SERVER_IP=$(curl -s ifconfig.me || hostname -I | awk '{print $1}')
 echo "Using IP: $SERVER_IP"
-
 
 echo "=== Creating OpenVPN directory ==="
 mkdir -p /etc/openvpn/server
 cd /etc/openvpn/server
 
-
-###############################################################
-# CA INSERT HERE
-###############################################################
-echo "=== Writing Global CA ==="
+###############################################
+# Global CA certificate (same for all VPS)
+###############################################
+echo "=== Writing CA certificate ==="
 cat > /etc/openvpn/server/ca.crt <<'EOF'
 -----BEGIN CERTIFICATE-----
 MIIFEzCCAvugAwIBAgIUJG02X6MpSkTCQob1GJ9CaNrJt3EwDQYJKoZIhvcNAQEL
@@ -76,17 +74,15 @@ uImhp2w3xA==
 -----END CERTIFICATE-----
 EOF
 
-
-
-###############################################################
-# SERVER CERT INSERT HERE
-###############################################################
-echo "=== Writing fixed global server certificate ==="
+###############################################
+# Global Server certificate (same for all VPS)
+###############################################
+echo "=== Writing server certificate ==="
 cat > /etc/openvpn/server/server.crt <<'EOF'
 -----BEGIN CERTIFICATE-----
 MIIEtjCCAp4CFAbfmyx9LE7QtoVckDo9KALEQX9jMA0GCSqGSIb3DQEBCwUAMBkx
-FzAVBgNVBAMMDk9WUE4tR2xvYmFsLUNBMB4XDTI1MTEyOTA1MTA1NVoXDTM1MTEy
-NzA1MTA1NVowFjEUMBIGA1UEAwwLT1ZQTi1TZXJ2ZXIwggIiMA0GCSqGSIb3DQEB
+FzAVBgNVBAMMDk9WUE4tR2xvYmFsLUNBMB4XDTI1MTEyOTA5NTExNVoXDTM1MTEy
+NzA5NTExNVowFjEUMBIGA1UEAwwLT1ZQTi1TZXJ2ZXIwggIiMA0GCSqGSIb3DQEB
 AQUAA4ICDwAwggIKAoICAQCzrZeolH+aA2yXQJ12FE9r9qqWh0Q61c027iXpHjVH
 exCbmG1/unjJTkk4G+02JAWUVOVnIzX20RTOpOsJSWmTVBHfvxkNu5e9AEZDRjxa
 aO/CHUrLyWYSjsQXDe2H9F1r6nGEXHrE2GbTNdtJK/AG436qebozfxL4FDOwsTex
@@ -113,13 +109,10 @@ yF3d7djUWxEOfA==
 -----END CERTIFICATE-----
 EOF
 
-
-
-###############################################################
-# SERVER KEY INSERT HERE
-###############################################################
-
-echo "=== Writing fixed global server private key ==="
+###############################################
+# Global Server private key (same for all VPS)
+###############################################
+echo "=== Writing server private key ==="
 cat > /etc/openvpn/server/server.key <<'EOF'
 -----BEGIN PRIVATE KEY-----
 MIIJQQIBADANBgkqhkiG9w0BAQEFAASCCSswggknAgEAAoICAQCzrZeolH+aA2yX
@@ -174,22 +167,16 @@ QQbfffINWmW0Qto6XtIWDv76jhBAH54DhS7TD1sDkF+R86N/VZzvafFd8W2L41vq
 Q9sHgFeQvngMtMmkakWHAwGhqzpY
 -----END PRIVATE KEY-----
 EOF
-
 chmod 600 /etc/openvpn/server/server.key
 
-
-###############################################################
-# Generate DH PARAMETER (REQUIRED FOR OPENVPN 2.6)
-###############################################################
 echo "=== Generating dh.pem (2048-bit) ==="
 openssl dhparam -out dh.pem 2048
 
-
-###############################################################
-# Writing OpenVPN server.conf (2.6 Compatible)
-###############################################################
-echo "=== Creating server.conf ==="
-cat > /etc/openvpn/server/server.conf <<"EOF"
+###############################################
+# OpenVPN 2.6 compatible server.conf
+###############################################
+echo "=== Writing server.conf ==="
+cat > /etc/openvpn/server/server.conf <<'EOF'
 port 1194
 proto udp
 dev tun
@@ -223,35 +210,32 @@ duplicate-cn
 verb 3
 EOF
 
-
-###############################################################
-# Enable IP FORWARD
-###############################################################
 echo "=== Enabling IP forwarding ==="
 echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-openvpn-forward.conf
 sysctl -p /etc/sysctl.d/99-openvpn-forward.conf
 
+###############################################
+# NAT rules: eth0 + eth1 (multi-interface VPS)
+###############################################
+echo "=== Configuring NAT (eth0 + eth1) ==="
+iptables -t nat -F
 
-###############################################################
-# FIREWALL NAT
-###############################################################
-echo "=== Configuring firewall ==="
-NIC=$(ip -o -4 route show to default | awk '{print $5}')
-iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o $NIC -j MASQUERADE
+iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE 2>/dev/null || true
+iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth1 -j MASQUERADE 2>/dev/null || true
+
 iptables-save > /etc/iptables/rules.v4
 
-
-###############################################################
-# USERNAME / PASSWORD AUTH SETUP
-###############################################################
+###############################################
+# Username/password auth
+###############################################
 echo "=== Setting up authentication ==="
 mkdir -p /etc/openvpn/server/auth
 
-cat > /etc/openvpn/server/auth/psw-file <<"EOF"
+cat > /etc/openvpn/server/auth/psw-file <<'EOF'
 openvpn Easin112233@
 EOF
 
-cat > /etc/openvpn/server/auth/checkpsw.sh <<"EOF"
+cat > /etc/openvpn/server/auth/checkpsw.sh <<'EOF'
 #!/bin/bash
 
 PASSFILE="/etc/openvpn/server/auth/psw-file"
@@ -274,18 +258,16 @@ EOF
 chmod 700 /etc/openvpn/server/auth/checkpsw.sh
 chmod 600 /etc/openvpn/server/auth/psw-file
 
-
-###############################################################
-# START SERVICE
-###############################################################
+###############################################
+# Start OpenVPN service
+###############################################
 echo "=== Starting OpenVPN service ==="
 systemctl enable openvpn-server@server.service
 systemctl restart openvpn-server@server.service
 
-
-###############################################################
-# GENERATE CLIENT OVPN
-###############################################################
+###############################################
+# Generate client.ovpn and serve via nginx
+###############################################
 echo "=== Creating client.ovpn ==="
 mkdir -p /var/www/html/ovpn
 
@@ -301,6 +283,9 @@ persist-key
 persist-tun
 
 auth-user-pass
+setenv CLIENT_CERT 0
+remote-cert-tls server
+
 cipher AES-256-CBC
 auth SHA256
 verb 3
@@ -310,20 +295,17 @@ $(cat /etc/openvpn/server/ca.crt)
 </ca>
 EOF
 
-
-###############################################################
-# DONE!
-###############################################################
 echo "=============================================="
-echo " INSTALL SUCCESSFULLY COMPLETED!"
+echo " INSTALL SUCCESSFUL!"
 echo "----------------------------------------------"
 echo " Server IP: ${SERVER_IP}"
 echo " Username: openvpn"
 echo " Password: Easin112233@"
 echo ""
-echo " Client config (download):"
+echo " Download client config:"
 echo "   http://${SERVER_IP}/ovpn/client.ovpn"
 echo ""
-echo " Moving to new VPS?"
-echo "   Just replace IP inside old .ovpn"
+echo " Note:"
+echo "   - Same CA/cert/key every VPS."
+echo "   - New VPS e same script run kore, old .ovpn e sudhu IP change korleo cholbe."
 echo "=============================================="
