@@ -146,26 +146,53 @@ EOF
 }
 
 enable_ip_forwarding() {
-    echo "Enabling IP forwarding..."
+    echo "Enabling IP forwarding and fixing kernel routing filters..."
+
+    # Remove old entries
     sed -i '/^net.ipv4.ip_forward/d' /etc/sysctl.conf
-    echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+    sed -i '/^net.ipv4.conf.all.rp_filter/d' /etc/sysctl.conf
+    sed -i '/^net.ipv4.conf.default.rp_filter/d' /etc/sysctl.conf
+
+    # Add correct values
+    {
+        echo "net.ipv4.ip_forward=1"
+        echo "net.ipv4.conf.all.rp_filter=0"
+        echo "net.ipv4.conf.default.rp_filter=0"
+    } >> /etc/sysctl.conf
+
+    # Apply changes
     sysctl -p >/dev/null
+
+    echo "IP forwarding enabled."
 }
 
-setup_iptables() {
-    echo "Configuring iptables (simple NAT)..."
-    # Determine default interface
-    IFACE=$(ip route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -n1)
 
+setup_iptables() {
+    echo "Configuring iptables (NAT + forwarding)..."
+
+    # Detect interface
+    IFACE=$(ip route get 1.1.1.1 | awk '/dev/ {print $5}')
+
+    # Clear previous rules
+    iptables -t nat -F
+    iptables -F
+
+    # NAT MASQUERADE
     iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o "$IFACE" -j MASQUERADE
-    iptables -A INPUT -p "$PROTOCOL" --dport "$PORT" -j ACCEPT
+    iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
+
+    # Forward rules
     iptables -A FORWARD -s 10.8.0.0/24 -j ACCEPT
     iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
 
-    # Persist rules
+    # Allow OpenVPN port
+    iptables -A INPUT -p "$PROTOCOL" --dport "$PORT" -j ACCEPT
+
+    echo "Saving iptables rules..."
     apt-get install -y iptables-persistent >/dev/null 2>&1 || true
     iptables-save > /etc/iptables/rules.v4
 }
+
 
 start_openvpn_service() {
     systemctl enable --now openvpn-server@server.service
