@@ -1,131 +1,121 @@
 #!/bin/bash
 set -e
 
-echo "===== AI Image Enhancer Setup Started ====="
+echo "===== Installing AI Image Enhancer (NCNN Version) ====="
 
-# Update system
 sudo apt update -y
-sudo apt upgrade -y
+sudo apt install -y nginx unzip wget
 
-# Install dependencies
-sudo apt install -y python3 python3-pip python3-venv nginx git
-
-# Create app folder
+# Create app directory
 sudo mkdir -p /var/www/enhancer
-sudo chown $USER:$USER /var/www/enhancer
 cd /var/www/enhancer
 
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
+# Download Real-ESRGAN NCNN (no PyTorch)
+wget https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/download/v0.2.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip
+unzip realesrgan-ncnn-vulkan-20220424-ubuntu.zip
+mv realesrgan-ncnn-vulkan-20220424-ubuntu realesrgan
 
-# Install Real-ESRGAN & Flask
-pip install flask pillow basicsr facexlib gfpgan realesrgan
+# Create upload/enhance script
+cat << 'EOF' > enhance.sh
+#!/bin/bash
+INPUT="$1"
+OUTPUT="$2"
 
-# Download Real-ESRGAN repo
-git clone https://github.com/xinntao/Real-ESRGAN.git
-cd Real-ESRGAN
-pip install -r requirements.txt
+# 4x upscale
+/var/www/enhancer/realesrgan/realesrgan-ncnn-vulkan -i "$INPUT" -o "$OUTPUT" -s 4
+EOF
 
-# Download model weights
-wget https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth -O weights.pth
+chmod +x enhance.sh
 
-# Go back to main folder
-cd /var/www/enhancer
+# Install backend (Flask lightweight)
+sudo apt install -y python3 python3-pip
+pip3 install flask
 
 # Create Flask backend
 cat << 'EOF' > app.py
 from flask import Flask, request, send_file, render_template
-from PIL import Image
 import os
-from realesrgan import RealESRGAN
+import subprocess
 
 app = Flask(__name__)
 
-model = RealESRGAN('Real-ESRGAN/weights.pth', scale=4)
-
-@app.route('/')
+@app.route("/")
 def index():
     return render_template("index.html")
 
-@app.route('/enhance', methods=['POST'])
+@app.route("/enhance", methods=["POST"])
 def enhance():
-    file = request.files['image']
+    file = request.files["image"]
+
     input_path = "input.jpg"
-    output_path = "output.jpg"
+    output_path = "output.png"
 
     file.save(input_path)
 
-    img = Image.open(input_path)
-    enhanced = model.predict(img)
-    enhanced.save(output_path)
+    subprocess.run(["bash", "enhance.sh", input_path, output_path])
 
-    return send_file(output_path, as_attachment=True, download_name="enhanced.jpg")
+    return send_file(output_path, as_attachment=True)
 EOF
 
-# Create templates folder
 mkdir -p templates
 
-# Create web UI
+# Simple frontend
 cat << 'EOF' > templates/index.html
 <!DOCTYPE html>
 <html>
 <head>
 <title>AI Image Enhancer</title>
 <style>
-body { font-family: Arial; text-align: center; background: #f8f8f8; }
-.container { margin-top: 50px; background: white; padding: 30px; border-radius: 10px; width: 40%; margin-left: auto; margin-right: auto; }
-button { padding: 12px 20px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; }
+body{font-family:Arial;text-align:center;margin-top:50px;}
+input{padding:10px;}
+button{padding:10px 20px;background:#007bff;color:white;border:none;border-radius:5px;}
 </style>
 </head>
 <body>
-<div class="container">
-<h2>AI Image Enhancer</h2>
+<h2>AI Image Enhancer (4× Upscale)</h2>
 <form action="/enhance" method="POST" enctype="multipart/form-data">
 <input type="file" name="image" required><br><br>
 <button type="submit">Enhance Image</button>
 </form>
-</div>
 </body>
 </html>
 EOF
 
-# Create Gunicorn service
-sudo bash -c 'cat <<EOF > /etc/systemd/system/enhancer.service
+# Create systemd service for Flask
+cat << EOF | sudo tee /etc/systemd/system/enhancer.service
 [Unit]
-Description=AI Image Enhancer
+Description=AI Enhancer
 After=network.target
 
 [Service]
-User=root
+ExecStart=/usr/bin/python3 /var/www/enhancer/app.py
 WorkingDirectory=/var/www/enhancer
-ExecStart=/var/www/enhancer/venv/bin/gunicorn -b localhost:5000 app:app
 Restart=always
+User=root
 
 [Install]
 WantedBy=multi-user.target
-EOF'
+EOF
 
-# Enable service
 sudo systemctl daemon-reload
 sudo systemctl enable enhancer
 sudo systemctl start enhancer
 
 # Configure NGINX
-sudo bash -c 'cat <<EOF > /etc/nginx/sites-available/enhancer
+cat << EOF | sudo tee /etc/nginx/sites-available/enhancer
 server {
     listen 80;
     server_name _;
 
     location / {
-        proxy_pass http://localhost:5000;
+        proxy_pass http://127.0.0.1:5000;
     }
 }
-EOF'
+EOF
 
 sudo ln -sf /etc/nginx/sites-available/enhancer /etc/nginx/sites-enabled/enhancer
 sudo nginx -t
 sudo systemctl restart nginx
 
-echo "===== INSTALLATION COMPLETE ====="
-echo "Open your browser and visit: http://YOUR_SERVER_IP"
+echo "===== INSTALL COMPLETE ====="
+echo "Visit: http://YOUR_SERVER_IP"
