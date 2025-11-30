@@ -1,12 +1,6 @@
 #!/bin/bash
-#
-# OpenVPN Installer (Username/Password ONLY + Server Certificate)
-# Auto .ovpn download at http://SERVER_IP/openvpn.ovpn
-#
-
 set -e
 
-# DIRECTORIES
 EASYRSA_DIR="/etc/openvpn/easy-rsa"
 SERVER_CONF="/etc/openvpn/server/server.conf"
 AUTH_DIR="/etc/openvpn/auth"
@@ -14,105 +8,69 @@ USER_FILE="$AUTH_DIR/users.txt"
 CHECK_SCRIPT="$AUTH_DIR/checkpsw.sh"
 WEB_ROOT="/var/www/html"
 
-# ---------- ROOT CHECK ----------
-require_root() {
-    [[ "$EUID" -ne 0 ]] && { echo "Run as ROOT"; exit 1; }
-}
+# ---------------- ROOT CHECK ----------------
+if [[ "$EUID" -ne 0 ]]; then
+    echo "Run as root."
+    exit 1
+fi
 
-# ---------- OS DETECT ----------
-detect_os() {
-    . /etc/os-release || exit 1
-    [[ "$ID" == "ubuntu" || "$ID" == "debian" ]] || { echo "Debian/Ubuntu only"; exit 1; }
-}
-
-# ---------- IP DETECT ----------
+# ---------------- GET IP ----------------
 get_server_ip() {
     SERVER_IP=$(curl -s ifconfig.me || true)
     [[ -z "$SERVER_IP" ]] && SERVER_IP=$(hostname -I | awk '{print $1}')
 }
 
-# ---------- AUTH SYSTEM ----------
+# ---------------- USER AUTH SYSTEM ----------------
 setup_auth_system() {
     mkdir -p "$AUTH_DIR"
+    touch "$USER_FILE"
 
-    # Credentials file
-    [[ ! -f "$USER_FILE" ]] && touch "$USER_FILE"
-
-    # Verification script
-    cat > "$CHECK_SCRIPT" <<'EOF'
+cat > "$CHECK_SCRIPT" <<'EOF'
 #!/bin/bash
 PASSFILE="/etc/openvpn/auth/users.txt"
 USER="$1"
 PASS="$2"
-
-VALID=$(grep -w "$USER:$PASS" "$PASSFILE" || true)
-
-if [[ -n "$VALID" ]]; then
-    exit 0
-else
-    exit 1
-fi
+grep -w "$USER:$PASS" "$PASSFILE" >/dev/null && exit 0
+exit 1
 EOF
 
     chmod +x "$CHECK_SCRIPT"
 }
 
-# ---------- ADD USER ----------
+# ---------------- ADD USER ----------------
 add_user() {
-    read -rp "Enter username: " u
-    read -rp "Enter password: " p
+    read -rp "Username: " u
+    read -rp "Password: " p
     echo "$u:$p" >> "$USER_FILE"
-    echo "User added!"
+    echo "User added."
 }
 
-# ---------- REMOVE USER ----------
+# ---------------- REMOVE USER ----------------
 remove_user() {
     read -rp "Remove username: " u
     sed -i "/^$u:/d" "$USER_FILE"
-    echo "User removed."
+    echo "Removed."
 }
 
-# ---------- LIST USERS ----------
+# ---------------- SHOW USERS ----------------
 list_users() {
-    echo "---- USER LIST ----"
     cut -d: -f1 "$USER_FILE"
 }
 
-# ---------- SHOW CONNECTED CLIENTS ----------
-show_connected() {
-    echo "---- CONNECTED CLIENTS ----"
-    cat /var/log/openvpn-status.log || echo "Status file not found."
+# ---------------- SHOW CONNECTIONS ----------------
+show_connections() {
+    cat /var/log/openvpn-status.log || echo "No status log."
 }
 
-# ---------- SHOW LOGS ----------
+# ---------------- SHOW LOGS ----------------
 show_logs() {
     journalctl -u openvpn-server@server --no-pager | tail -n 200
 }
 
-# ---------- NGINX DOWNLOAD ----------
-setup_nginx_download() {
-    OVPN_FILE="/root/client.ovpn"
-
-    apt-get install -y nginx >/dev/null 2>&1
-    systemctl enable --now nginx
-
-    mkdir -p "$WEB_ROOT"
-    cp "$OVPN_FILE" "$WEB_ROOT/openvpn.ovpn"
-    chmod 644 "$WEB_ROOT/openvpn.ovpn"
-
-    iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || \
-        iptables -A INPUT -p tcp --dport 80 -j ACCEPT
-
-    apt-get install -y iptables-persistent >/dev/null 2>&1 || true
-    iptables-save > /etc/iptables/rules.v4 || true
-
-    echo "Download config at: http://$SERVER_IP/openvpn.ovpn"
-}
-
-# ---------- EASYRSA / SERVER CERT ----------
+# ---------------- EASYRSA SERVER CERT ----------------
 setup_easyrsa() {
     apt-get update
-    apt-get install -y openvpn easy-rsa iptables curl
+    apt-get install -y openvpn easy-rsa nginx iptables curl
 
     mkdir -p "$EASYRSA_DIR"
     cp -r /usr/share/easy-rsa/* "$EASYRSA_DIR"
@@ -129,7 +87,7 @@ setup_easyrsa() {
     cp pki/ca.crt pki/issued/server.crt pki/private/server.key pki/dh.pem ta.key /etc/openvpn/server/
 }
 
-# ---------- SERVER CONFIG ----------
+# ---------------- SERVER CONFIG ----------------
 write_server_conf() {
 cat > "$SERVER_CONF" <<EOF
 port $PORT
@@ -146,26 +104,21 @@ topology subnet
 server 10.8.0.0 255.255.255.0
 ifconfig-pool-persist ipp.txt
 
-### AUTH ###
 verify-client-cert none
 auth-user-pass-verify /etc/openvpn/auth/checkpsw.sh via-file
 username-as-common-name
 
-### SERVER TLS ###
 ca ca.crt
 cert server.crt
 key server.key
 dh dh.pem
 tls-crypt ta.key
 
-### ROUTE ALL TRAFFIC ###
 push "redirect-gateway def1 bypass-dhcp"
 
-### DNS ###
 push "dhcp-option DNS 1.1.1.1"
 push "dhcp-option DNS 8.8.8.8"
 
-### CIPHERS ###
 data-ciphers AES-256-GCM:AES-128-GCM:AES-256-CBC
 data-ciphers-fallback AES-256-CBC
 
@@ -174,37 +127,35 @@ verb 3
 EOF
 }
 
-# ---------- FORWARDING ----------
-enable_forwarding() {
+# ---------------- ROUTING (FIXES YOUR NO INTERNET ERROR) ----------------
+setup_routing() {
     echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-openvpn.conf
     sysctl -p /etc/sysctl.d/99-openvpn.conf
-}
 
-# ---------- IPTABLES ----------
-setup_iptables() {
     IFACE=$(ip route get 1.1.1.1 | awk '/dev/ {print $5}')
     iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o "$IFACE" -j MASQUERADE
     iptables -A FORWARD -i tun0 -o "$IFACE" -j ACCEPT
     iptables -A FORWARD -i "$IFACE" -o tun0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+
     iptables-save > /etc/iptables/rules.v4
 }
 
-# ---------- START OPENVPN ----------
+# ---------------- START SERVICE ----------------
 start_service() {
     systemctl enable --now openvpn-server@server
 }
 
-# ---------- GENERATE CLIENT CONFIG ----------
-generate_client_ovpn() {
+# ---------------- CREATE CLIENT ----------------
+generate_client() {
 cat > /root/client.ovpn <<EOF
 client
 dev tun
 proto $PROTOCOL
 remote $SERVER_IP $PORT
 auth-user-pass
+remote-cert-tls server
 cipher AES-256-CBC
 auth SHA256
-remote-cert-tls server
 verb 3
 
 <ca>
@@ -215,26 +166,28 @@ $(cat /etc/openvpn/server/ca.crt)
 $(cat /etc/openvpn/server/ta.key)
 </tls-crypt>
 EOF
+
+    mkdir -p "$WEB_ROOT"
+    cp /root/client.ovpn "$WEB_ROOT/openvpn.ovpn"
 }
 
-# ---------- WIPE ----------
+# ---------------- WIPE EVERYTHING ----------------
 wipe_all() {
     systemctl stop openvpn-server@server || true
     systemctl disable openvpn-server@server || true
-    apt remove --purge -y openvpn easy-rsa nginx iptables-persistent || true
+    apt-get remove --purge -y openvpn easy-rsa nginx iptables-persistent || true
     rm -rf /etc/openvpn
     rm -rf "$WEB_ROOT/openvpn.ovpn"
-    echo "Everything removed."
+    echo "All removed."
 }
 
-# ---------- INSTALL FLOW ----------
+# ---------------- INSTALL ----------------
 fresh_install() {
-    echo "IP detected: $SERVER_IP"
+    get_server_ip
 
-    echo "1) UDP (recommended)"
-    echo "2) TCP"
-    read -rp "Protocol [1]: " p
-    [[ "$p" == "2" ]] && PROTOCOL="tcp" || PROTOCOL="udp"
+    echo "Protocol: 1) UDP  2) TCP"
+    read -rp "Choice [1]: " ch
+    [[ "$ch" == "2" ]] && PROTOCOL="tcp" || PROTOCOL="udp"
 
     read -rp "Port [1194]: " PORT
     PORT=${PORT:-1194}
@@ -242,33 +195,26 @@ fresh_install() {
     setup_auth_system
     setup_easyrsa
     write_server_conf
-    enable_forwarding
-    setup_iptables
+    setup_routing
     start_service
-    generate_client_ovpn
-    setup_nginx_download
+    generate_client
 
-    echo "INSTALL COMPLETE!"
+    echo "DONE. DOWNLOAD:"
+    echo "http://$SERVER_IP/openvpn.ovpn"
 }
 
-# ---------- MAIN ----------
-require_root
-detect_os
-get_server_ip
-
+# ---------------- MAIN MENU ----------------
 if [[ ! -f "$SERVER_CONF" ]]; then
     fresh_install
     exit 0
 fi
 
-clear
-echo "OpenVPN is already installed."
 echo "1) Add User"
 echo "2) Remove User"
 echo "3) List Users"
-echo "4) Show Connected Clients"
-echo "5) Show Logs"
-echo "6) Remove EVERYTHING"
+echo "4) Show Connected"
+echo "5) Logs"
+echo "6) Remove Everything"
 echo "7) Exit"
 read -rp "Option: " O
 
@@ -276,9 +222,8 @@ case "$O" in
     1) add_user ;;
     2) remove_user ;;
     3) list_users ;;
-    4) show_connected ;;
+    4) show_connections ;;
     5) show_logs ;;
     6) wipe_all ;;
     7) exit 0 ;;
-    *) echo "Invalid option" ;;
 esac
