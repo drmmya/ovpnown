@@ -1,21 +1,48 @@
 #!/bin/bash
 set -e
 
-echo "===== AI Image Enhancer (NCNN Version) Setup Started ====="
+echo "===== Installing Dependencies ====="
 
 sudo apt update -y
-sudo apt install -y nginx unzip wget python3 python3-pip
+sudo apt install -y \
+    git cmake build-essential python3 python3-pip python3-venv \
+    unzip wget curl clang libvulkan1 vulkan-utils mesa-vulkan-drivers
+
+echo "===== Installing Vulkan SDK ====="
+
+wget https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.gz
+tar -xvzf vulkan-sdk.tar.gz
+VULKAN_SDK_DIR=$(find . -maxdepth 1 -type d -name "*/x86_64" | head -n 1)
+export VULKAN_SDK="$PWD/$VULKAN_SDK_DIR"
+export PATH="$VULKAN_SDK/bin:$PATH"
+export LD_LIBRARY_PATH="$VULKAN_SDK/lib:$LD_LIBRARY_PATH"
+
+echo "===== Cloning Real-ESRGAN-NCNN-Vulkan (Latest Source) ====="
 
 sudo mkdir -p /var/www/enhancer
 sudo chown $USER:$USER /var/www/enhancer
 cd /var/www/enhancer
 
-echo "===== Downloading RealESRGAN NCNN (Stable Working Build) ====="
+git clone https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan.git source
+cd source
 
-wget https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/download/v0.2.0/RealESRGAN-ncnn-vulkan-20220728-ubuntu.zip
+echo "===== Updating Submodules ====="
+git submodule update --init --recursive
 
-unzip RealESRGAN-ncnn-vulkan-20220728-ubuntu.zip
-mv RealESRGAN-ncnn-vulkan-20220728-ubuntu realesrgan
+echo "===== Building Real-ESRGAN-NCNN-Vulkan ====="
+
+mkdir -p build
+cd build
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make -j$(nproc)
+
+echo "===== Copying Build Output ====="
+
+cd /var/www/enhancer
+mkdir -p realesrgan
+cp /var/www/enhancer/source/build/realesrgan-ncnn-vulkan realesrgan/
+cp -r /var/www/enhancer/source/models realesrgan/
+
 chmod +x realesrgan/realesrgan-ncnn-vulkan
 
 echo "===== Creating Enhance Script ====="
@@ -29,6 +56,8 @@ OUTPUT="$2"
 EOF
 
 chmod +x enhance.sh
+
+echo "===== Installing Flask ====="
 
 pip3 install flask
 
@@ -143,4 +172,4 @@ sudo nginx -t
 sudo systemctl restart nginx
 
 echo "===== INSTALL COMPLETE ====="
-echo "Visit your enhancer website: http://YOUR_SERVER_IP/"
+echo "Open your website: http://YOUR_SERVER_IP/"
