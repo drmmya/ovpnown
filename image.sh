@@ -8,10 +8,11 @@ sudo apt install -y \
     git cmake build-essential python3 python3-pip python3-venv \
     unzip wget curl clang libvulkan1 mesa-vulkan-drivers
 
-echo "===== Cloning Vulkan SDK (Header-only build) ====="
+echo "===== Downloading Vulkan SDK (Header-only build) ====="
 
 wget -q https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.gz
 tar -xf vulkan-sdk.tar.gz
+
 SDK_DIR=$(find . -maxdepth 1 -type d -name "*/x86_64" | head -n 1)
 export VULKAN_SDK="$PWD/$SDK_DIR"
 export PATH="$VULKAN_SDK/bin:$PATH"
@@ -28,7 +29,7 @@ echo "===== Cloning Real-ESRGAN-ncnn-vulkan (Latest Source) ====="
 git clone https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan.git source
 cd source
 
-echo "===== Cloning Submodules ====="
+echo "===== Initializing Submodules ====="
 git submodule update --init --recursive
 
 echo "===== Building Project ====="
@@ -61,7 +62,7 @@ chmod +x enhance.sh
 echo "===== Installing Flask ====="
 pip3 install flask
 
-echo "===== Creating Flask App ====="
+echo "===== Creating Flask Backend ====="
 
 cat << 'EOF' > app.py
 from flask import Flask, request, send_file, render_template
@@ -89,7 +90,7 @@ EOF
 
 mkdir -p templates
 
-echo "===== Creating Web UI ====="
+echo "===== Creating Web Interface ====="
 
 cat << 'EOF' > templates/index.html
 <!DOCTYPE html>
@@ -159,5 +160,5 @@ sudo ln -sf /etc/nginx/sites-available/enhancer /etc/nginx/sites-enabled/enhance
 sudo nginx -t
 sudo systemctl restart nginx
 
-echo "===== INSTALL FINISHED ====="
-echo "Visit http://YOUR_SERVER_IP/"
+echo "===== INSTALL COMPLETE ====="
+echo "Your enhancer is live at: http://YOUR_SERVER_IP/"
