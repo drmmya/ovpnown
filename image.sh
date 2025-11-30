@@ -13,38 +13,43 @@ echo "===== Downloading Vulkan SDK (Header-only) ====="
 wget -q https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.gz
 tar -xf vulkan-sdk.tar.gz
 
-SDK_DIR=$(find . -maxdepth 2 -type d -name "x86_64" | head -n 1)
+SDK_DIR=$(find . -maxdepth 3 -type d -name "x86_64" | head -n 1)
 export VULKAN_SDK="$PWD/$SDK_DIR"
 export PATH="$VULKAN_SDK/bin:$PATH"
 export LD_LIBRARY_PATH="$VULKAN_SDK/lib:$LD_LIBRARY_PATH"
 
-echo "===== Preparing Project Directory ====="
+echo "===== PREPARING PROJECT DIRECTORY ====="
 
+sudo rm -rf /var/www/enhancer/source       # <<< VERY IMPORTANT
 sudo mkdir -p /var/www/enhancer
 sudo chown $USER:$USER /var/www/enhancer
 cd /var/www/enhancer
 
-echo "===== Cloning Real-ESRGAN-ncnn-vulkan ====="
-
+echo "===== CLONING MAIN REPO ====="
 git clone https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan.git source
 cd source
 
-echo "===== Fixing Submodule URLs (SSH → HTTPS) ====="
+echo "===== FIXING SUBMODULE URLS (SSH → HTTPS) ====="
 
 sed -i 's|git@github.com:webmproject/libwebp.git|https://github.com/webmproject/libwebp.git|' .gitmodules
 sed -i 's|git@github.com:Tencent/ncnn.git|https://github.com/Tencent/ncnn.git|' .gitmodules
 
 git submodule sync --recursive
+
+git config submodule.src/libwebp.url https://github.com/webmproject/libwebp.git
+git config submodule.src/ncnn.url https://github.com/Tencent/ncnn.git
+
+echo "===== UPDATING SUBMODULES ====="
 git submodule update --init --recursive
 
-echo "===== Building from Source ====="
+echo "===== BUILDING PROJECT ====="
 
 mkdir -p build
 cd build
 cmake -DUSE_SYSTEM_VULKAN=ON -DCMAKE_BUILD_TYPE=Release ..
 make -j$(nproc)
 
-echo "===== Installing Build Output ====="
+echo "===== INSTALLING BUILD OUTPUT ====="
 
 cd /var/www/enhancer
 mkdir -p realesrgan
@@ -52,7 +57,7 @@ cp source/build/realesrgan-ncnn-vulkan realesrgan/
 cp -r source/src/models realesrgan/
 chmod +x realesrgan/realesrgan-ncnn-vulkan
 
-echo "===== Creating Enhance Script ====="
+echo "===== CREATING ENHANCE SCRIPT ====="
 
 cat << 'EOF' > enhance.sh
 #!/bin/bash
@@ -64,10 +69,10 @@ EOF
 
 chmod +x enhance.sh
 
-echo "===== Installing Flask ====="
+echo "===== INSTALLING FLASK ====="
 pip3 install flask
 
-echo "===== Creating Flask Backend ====="
+echo "===== CREATING FLASK BACKEND ====="
 
 cat << 'EOF' > app.py
 from flask import Flask, request, send_file, render_template
@@ -94,7 +99,7 @@ EOF
 
 mkdir -p templates
 
-echo "===== Creating Web Interface ====="
+echo "===== CREATING FRONTEND ====="
 
 cat << 'EOF' > templates/index.html
 <!DOCTYPE html>
@@ -125,7 +130,7 @@ button {
 </html>
 EOF
 
-echo "===== Creating Systemd Service ====="
+echo "===== CREATING SYSTEMD SERVICE ====="
 
 sudo bash -c 'cat << EOF > /etc/systemd/system/enhancer.service
 [Unit]
@@ -146,7 +151,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable enhancer
 sudo systemctl start enhancer
 
-echo "===== Configuring NGINX ====="
+echo "===== CONFIGURING NGINX ====="
 
 sudo bash -c 'cat << EOF > /etc/nginx/sites-available/enhancer
 server {
@@ -165,4 +170,4 @@ sudo nginx -t
 sudo systemctl restart nginx
 
 echo "===== INSTALL COMPLETE ====="
-echo "Your website is live: http://YOUR_SERVER_IP/"
+echo "Access your enhancer: http://YOUR_SERVER_IP/"
