@@ -6,43 +6,44 @@ echo "===== Installing Dependencies ====="
 sudo apt update -y
 sudo apt install -y \
     git cmake build-essential python3 python3-pip python3-venv \
-    unzip wget curl clang libvulkan1 vulkan-utils mesa-vulkan-drivers
+    unzip wget curl clang libvulkan1 mesa-vulkan-drivers
 
-echo "===== Installing Vulkan SDK ====="
+echo "===== Cloning Vulkan SDK (Header-only build) ====="
 
-wget https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.gz
-tar -xvzf vulkan-sdk.tar.gz
-VULKAN_SDK_DIR=$(find . -maxdepth 1 -type d -name "*/x86_64" | head -n 1)
-export VULKAN_SDK="$PWD/$VULKAN_SDK_DIR"
+wget -q https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.gz
+tar -xf vulkan-sdk.tar.gz
+SDK_DIR=$(find . -maxdepth 1 -type d -name "*/x86_64" | head -n 1)
+export VULKAN_SDK="$PWD/$SDK_DIR"
 export PATH="$VULKAN_SDK/bin:$PATH"
 export LD_LIBRARY_PATH="$VULKAN_SDK/lib:$LD_LIBRARY_PATH"
 
-echo "===== Cloning Real-ESRGAN-NCNN-Vulkan (Latest Source) ====="
+echo "===== Preparing Project Directory ====="
 
 sudo mkdir -p /var/www/enhancer
 sudo chown $USER:$USER /var/www/enhancer
 cd /var/www/enhancer
 
+echo "===== Cloning Real-ESRGAN-ncnn-vulkan (Latest Source) ====="
+
 git clone https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan.git source
 cd source
 
-echo "===== Updating Submodules ====="
+echo "===== Cloning Submodules ====="
 git submodule update --init --recursive
 
-echo "===== Building Real-ESRGAN-NCNN-Vulkan ====="
+echo "===== Building Project ====="
 
 mkdir -p build
 cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
+cmake -DUSE_SYSTEM_VULKAN=ON -DCMAKE_BUILD_TYPE=Release ..
 make -j$(nproc)
 
-echo "===== Copying Build Output ====="
+echo "===== Installing Built Binary ====="
 
 cd /var/www/enhancer
 mkdir -p realesrgan
-cp /var/www/enhancer/source/build/realesrgan-ncnn-vulkan realesrgan/
-cp -r /var/www/enhancer/source/models realesrgan/
-
+cp source/build/realesrgan-ncnn-vulkan realesrgan/
+cp -r source/models realesrgan/
 chmod +x realesrgan/realesrgan-ncnn-vulkan
 
 echo "===== Creating Enhance Script ====="
@@ -58,10 +59,9 @@ EOF
 chmod +x enhance.sh
 
 echo "===== Installing Flask ====="
-
 pip3 install flask
 
-echo "===== Creating Flask Backend ====="
+echo "===== Creating Flask App ====="
 
 cat << 'EOF' > app.py
 from flask import Flask, request, send_file, render_template
@@ -89,7 +89,7 @@ EOF
 
 mkdir -p templates
 
-echo "===== Creating Frontend ====="
+echo "===== Creating Web UI ====="
 
 cat << 'EOF' > templates/index.html
 <!DOCTYPE html>
@@ -97,26 +97,14 @@ cat << 'EOF' > templates/index.html
 <head>
 <title>AI Image Enhancer</title>
 <style>
-body {
-    font-family: Arial;
-    text-align: center;
-    margin-top: 50px;
-    background: #f4f4f4;
-}
+body { font-family: Arial; text-align: center; margin-top: 50px; }
 .container {
-    background: white;
-    width: 40%;
-    margin-left: auto;
-    margin-right: auto;
-    padding: 30px;
-    border-radius: 10px;
+    background: white; padding: 30px; width: 40%;
+    margin: auto; border-radius: 10px;
 }
 button {
-    padding: 10px 20px;
-    background: #007bff;
-    color: white;
-    border: none;
-    border-radius: 5px;
+    padding: 10px 20px; background: #007bff; color: white;
+    border: none; border-radius: 5px;
 }
 </style>
 </head>
@@ -132,7 +120,7 @@ button {
 </html>
 EOF
 
-echo "===== Creating systemd Service ====="
+echo "===== Creating Systemd Service ====="
 
 sudo bash -c 'cat << EOF > /etc/systemd/system/enhancer.service
 [Unit]
@@ -171,5 +159,5 @@ sudo ln -sf /etc/nginx/sites-available/enhancer /etc/nginx/sites-enabled/enhance
 sudo nginx -t
 sudo systemctl restart nginx
 
-echo "===== INSTALL COMPLETE ====="
-echo "Open your website: http://YOUR_SERVER_IP/"
+echo "===== INSTALL FINISHED ====="
+echo "Visit http://YOUR_SERVER_IP/"
