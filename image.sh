@@ -10,12 +10,12 @@ sudo mkdir -p /var/www/enhancer
 sudo chown $USER:$USER /var/www/enhancer
 cd /var/www/enhancer
 
-echo "===== Downloading RealESRGAN NCNN (Stable 2025 Version) ====="
+echo "===== Downloading RealESRGAN NCNN (Stable Working Build) ====="
 
-wget https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/download/v0.3.0/RealESRGAN-ncnn-vulkan-20220424-ubuntu.zip
-unzip RealESRGAN-ncnn-vulkan-20220424-ubuntu.zip
+wget https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/download/v0.2.0/RealESRGAN-ncnn-vulkan-20220728-ubuntu.zip
 
-mv RealESRGAN-ncnn-vulkan-20220424-ubuntu realesrgan
+unzip RealESRGAN-ncnn-vulkan-20220728-ubuntu.zip
+mv RealESRGAN-ncnn-vulkan-20220728-ubuntu realesrgan
 chmod +x realesrgan/realesrgan-ncnn-vulkan
 
 echo "===== Creating Enhance Script ====="
@@ -31,6 +31,8 @@ EOF
 chmod +x enhance.sh
 
 pip3 install flask
+
+echo "===== Creating Flask Backend ====="
 
 cat << 'EOF' > app.py
 from flask import Flask, request, send_file, render_template
@@ -57,6 +59,8 @@ def enhance():
 EOF
 
 mkdir -p templates
+
+echo "===== Creating Frontend ====="
 
 cat << 'EOF' > templates/index.html
 <!DOCTYPE html>
@@ -99,6 +103,8 @@ button {
 </html>
 EOF
 
+echo "===== Creating systemd Service ====="
+
 sudo bash -c 'cat << EOF > /etc/systemd/system/enhancer.service
 [Unit]
 Description=AI Enhancer
@@ -117,6 +123,8 @@ EOF'
 sudo systemctl daemon-reload
 sudo systemctl enable enhancer
 sudo systemctl start enhancer
+
+echo "===== Configuring NGINX ====="
 
 sudo bash -c 'cat << EOF > /etc/nginx/sites-available/enhancer
 server {
