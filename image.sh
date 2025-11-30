@@ -1,40 +1,46 @@
 #!/bin/bash
 set -e
 
-echo "===== Installing AI Image Enhancer (NCNN Version) ====="
+echo "===== AI Image Enhancer (NCNN Version) Setup Started ====="
 
 sudo apt update -y
-sudo apt install -y nginx unzip wget
+sudo apt install -y nginx unzip wget python3 python3-pip
 
 # Create app directory
 sudo mkdir -p /var/www/enhancer
+sudo chown $USER:$USER /var/www/enhancer
 cd /var/www/enhancer
 
-# Download Real-ESRGAN NCNN (no PyTorch)
-wget https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/download/v0.2.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip
-unzip realesrgan-ncnn-vulkan-20220424-ubuntu.zip
-mv realesrgan-ncnn-vulkan-20220424-ubuntu realesrgan
+echo "===== Downloading RealESRGAN NCNN (Stable 2025 Version) ====="
 
-# Create upload/enhance script
+# WORKING DOWNLOAD LINK
+wget https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/download/v0.3.0/RealESRGAN-ncnn-vulkan-20220424-ubuntu.zip
+
+unzip RealESRGAN-ncnn-vulkan-20220424-ubuntu.zip
+mv RealESRGAN-ncnn-vulkan-20220424-ubuntu realesrgan
+
+chmod +x realesrgan/realesrgan-ncnn-vulkan
+
+echo "===== Creating Enhance Script ====="
+
 cat << 'EOF' > enhance.sh
 #!/bin/bash
 INPUT="$1"
 OUTPUT="$2"
 
-# 4x upscale
 /var/www/enhancer/realesrgan/realesrgan-ncnn-vulkan -i "$INPUT" -o "$OUTPUT" -s 4
 EOF
 
 chmod +x enhance.sh
 
-# Install backend (Flask lightweight)
-sudo apt install -y python3 python3-pip
+echo "===== Installing Flask ====="
+
 pip3 install flask
 
-# Create Flask backend
+echo "===== Creating Flask Backend ====="
+
 cat << 'EOF' > app.py
 from flask import Flask, request, send_file, render_template
-import os
 import subprocess
 
 app = Flask(__name__)
@@ -59,30 +65,52 @@ EOF
 
 mkdir -p templates
 
-# Simple frontend
+echo "===== Creating Frontend ====="
+
 cat << 'EOF' > templates/index.html
 <!DOCTYPE html>
 <html>
 <head>
 <title>AI Image Enhancer</title>
 <style>
-body{font-family:Arial;text-align:center;margin-top:50px;}
-input{padding:10px;}
-button{padding:10px 20px;background:#007bff;color:white;border:none;border-radius:5px;}
+body {
+    font-family: Arial;
+    text-align: center;
+    margin-top: 50px;
+    background: #f4f4f4;
+}
+.container {
+    background: white;
+    width: 40%;
+    margin-left: auto;
+    margin-right: auto;
+    padding: 30px;
+    border-radius: 10px;
+}
+button {
+    padding: 10px 20px;
+    background: #007bff;
+    color: white;
+    border: none;
+    border-radius: 5px;
+}
 </style>
 </head>
 <body>
+<div class="container">
 <h2>AI Image Enhancer (4× Upscale)</h2>
 <form action="/enhance" method="POST" enctype="multipart/form-data">
 <input type="file" name="image" required><br><br>
 <button type="submit">Enhance Image</button>
 </form>
+</div>
 </body>
 </html>
 EOF
 
-# Create systemd service for Flask
-cat << EOF | sudo tee /etc/systemd/system/enhancer.service
+echo "===== Creating Systemd Service ====="
+
+sudo bash -c 'cat << EOF > /etc/systemd/system/enhancer.service
 [Unit]
 Description=AI Enhancer
 After=network.target
@@ -95,14 +123,15 @@ User=root
 
 [Install]
 WantedBy=multi-user.target
-EOF
+EOF'
 
 sudo systemctl daemon-reload
 sudo systemctl enable enhancer
 sudo systemctl start enhancer
 
-# Configure NGINX
-cat << EOF | sudo tee /etc/nginx/sites-available/enhancer
+echo "===== Configuring NGINX ====="
+
+sudo bash -c 'cat << EOF > /etc/nginx/sites-available/enhancer
 server {
     listen 80;
     server_name _;
@@ -111,11 +140,12 @@ server {
         proxy_pass http://127.0.0.1:5000;
     }
 }
-EOF
+EOF'
 
 sudo ln -sf /etc/nginx/sites-available/enhancer /etc/nginx/sites-enabled/enhancer
+
 sudo nginx -t
 sudo systemctl restart nginx
 
 echo "===== INSTALL COMPLETE ====="
-echo "Visit: http://YOUR_SERVER_IP"
+echo "Visit your enhancer website:  http://YOUR_SERVER_IP/"
