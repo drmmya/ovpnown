@@ -8,12 +8,12 @@ sudo apt install -y \
     git cmake build-essential python3 python3-pip python3-venv \
     unzip wget curl clang libvulkan1 mesa-vulkan-drivers
 
-echo "===== Downloading Vulkan SDK (Header-only build) ====="
+echo "===== Downloading Vulkan SDK (Header-only) ====="
 
 wget -q https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.gz
 tar -xf vulkan-sdk.tar.gz
 
-SDK_DIR=$(find . -maxdepth 1 -type d -name "*/x86_64" | head -n 1)
+SDK_DIR=$(find . -maxdepth 2 -type d -name "x86_64" | head -n 1)
 export VULKAN_SDK="$PWD/$SDK_DIR"
 export PATH="$VULKAN_SDK/bin:$PATH"
 export LD_LIBRARY_PATH="$VULKAN_SDK/lib:$LD_LIBRARY_PATH"
@@ -24,27 +24,32 @@ sudo mkdir -p /var/www/enhancer
 sudo chown $USER:$USER /var/www/enhancer
 cd /var/www/enhancer
 
-echo "===== Cloning Real-ESRGAN-ncnn-vulkan (Latest Source) ====="
+echo "===== Cloning Real-ESRGAN-ncnn-vulkan ====="
 
 git clone https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan.git source
 cd source
 
-echo "===== Initializing Submodules ====="
+echo "===== Fixing Submodule URLs (SSH → HTTPS) ====="
+
+sed -i 's|git@github.com:webmproject/libwebp.git|https://github.com/webmproject/libwebp.git|' .gitmodules
+sed -i 's|git@github.com:Tencent/ncnn.git|https://github.com/Tencent/ncnn.git|' .gitmodules
+
+git submodule sync --recursive
 git submodule update --init --recursive
 
-echo "===== Building Project ====="
+echo "===== Building from Source ====="
 
 mkdir -p build
 cd build
 cmake -DUSE_SYSTEM_VULKAN=ON -DCMAKE_BUILD_TYPE=Release ..
 make -j$(nproc)
 
-echo "===== Installing Built Binary ====="
+echo "===== Installing Build Output ====="
 
 cd /var/www/enhancer
 mkdir -p realesrgan
 cp source/build/realesrgan-ncnn-vulkan realesrgan/
-cp -r source/models realesrgan/
+cp -r source/src/models realesrgan/
 chmod +x realesrgan/realesrgan-ncnn-vulkan
 
 echo "===== Creating Enhance Script ====="
@@ -82,7 +87,6 @@ def enhance():
     output_path = "output.png"
 
     file.save(input_path)
-
     subprocess.run(["bash", "enhance.sh", input_path, output_path])
 
     return send_file(output_path, as_attachment=True)
@@ -161,4 +165,4 @@ sudo nginx -t
 sudo systemctl restart nginx
 
 echo "===== INSTALL COMPLETE ====="
-echo "Your enhancer is live at: http://YOUR_SERVER_IP/"
+echo "Your website is live: http://YOUR_SERVER_IP/"
